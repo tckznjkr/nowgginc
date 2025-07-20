@@ -6,15 +6,13 @@ const proxy = createProxyMiddleware({
   target: 'https://now.gg',
   changeOrigin: true,
   selfHandleResponse: true,
-  cookieDomainRewrite: 'localhost', // Redireciona os cookies para o domínio do proxy
+  cookieDomainRewrite: 'localhost',
 
   onProxyReq(proxyReq, req) {
-    // Cabeçalhos importantes para enganar o site
     proxyReq.setHeader('referer', 'https://now.gg');
     proxyReq.setHeader('origin', 'https://now.gg');
     proxyReq.setHeader('user-agent', req.headers['user-agent'] || 'Mozilla/5.0');
 
-    // Encaminha os cookies do navegador para o now.gg
     if (req.headers.cookie) {
       proxyReq.setHeader('cookie', req.headers.cookie);
     }
@@ -23,7 +21,6 @@ const proxy = createProxyMiddleware({
   onProxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
     const contentType = proxyRes.headers['content-type'];
 
-    // Reescreve cookies de resposta para o domínio do proxy
     const cookies = proxyRes.headers['set-cookie'];
     if (cookies) {
       const newCookies = cookies.map(cookie =>
@@ -32,26 +29,41 @@ const proxy = createProxyMiddleware({
       res.setHeader('set-cookie', newCookies);
     }
 
-    // Se for HTML, intercepta para reescrever URLs
     if (contentType && contentType.includes('text/html')) {
       let body = responseBuffer.toString('utf8');
 
-      // Reescreve links absolutos para manter dentro do proxy
+      // Reescreve redirecionamentos
       body = body.replace(/https:\/\/now\.gg/g, '');
-
-      // Redirecionamentos JavaScript (window.location)
       body = body.replace(/window\.location\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'window.location = "$1"');
       body = body.replace(/window\.location\.href\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'window.location.href = "$1"');
       body = body.replace(/document\.location\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'document.location = "$1"');
-
-      // Redirecionamentos via meta tag
       body = body.replace(/<meta\s+http-equiv=["']refresh["']\s+content=["']\d+;\s*url=https:\/\/now\.gg([^"']*)["']/gi,
         '<meta http-equiv="refresh" content="0;url=$1">');
+
+      // Injetar simulação de DPI e largura mobile
+      body = body.replace('</head>', `
+        <script>
+          Object.defineProperty(window, 'devicePixelRatio', {
+            get: () => 7
+          });
+          Object.defineProperty(screen, 'width', {
+            get: () => 400
+          });
+          Object.defineProperty(screen, 'height', {
+            get: () => 800
+          });
+          Object.defineProperty(window, 'innerWidth', {
+            get: () => 400
+          });
+          Object.defineProperty(window, 'innerHeight', {
+            get: () => 800
+          });
+        </script>
+      </head>`);
 
       return body;
     }
 
-    // Resposta sem modificação
     return responseBuffer;
   }),
 
@@ -64,5 +76,5 @@ app.use('/', proxy);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Proxy reverso rodando: http://localhost:${PORT}`);
+  console.log(`✅ Proxy rodando em http://localhost:${PORT}`);
 });
