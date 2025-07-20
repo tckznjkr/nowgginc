@@ -3,7 +3,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
 
-const LOCAL_DOMAIN = 'http://localhost:3000'; // Seu domínio local
+const LOCAL_DOMAIN = 'http://localhost:3000'; // seu domínio local
 
 app.get('/jogo', (req, res) => {
   res.send(`
@@ -13,12 +13,9 @@ app.get('/jogo', (req, res) => {
         <title>Jogo via Proxy</title>
         <style>
           html, body, iframe {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            border: 0;
-            overflow: hidden;
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            border: 0; overflow: hidden;
           }
         </style>
       </head>
@@ -57,7 +54,7 @@ app.use(
     },
 
     onProxyRes(proxyRes, req, res) {
-      // Ajusta cookies para domínio local
+      // Ajusta cookies para domínio local, só se for jogos (/apps)
       if (proxyRes.headers['set-cookie']) {
         const cookies = proxyRes.headers['set-cookie'].map(cookie =>
           cookie
@@ -67,10 +64,10 @@ app.use(
         res.setHeader('set-cookie', cookies);
       }
 
-      // Reescreve Location para seu domínio local
+      // Reescreve Location para seu domínio local só se Location for /apps
       if (proxyRes.headers['location']) {
         const original = proxyRes.headers['location'];
-        if (original.startsWith('https://now.gg')) {
+        if (original.startsWith('https://now.gg/apps')) {
           proxyRes.headers['location'] = original.replace('https://now.gg', LOCAL_DOMAIN);
         }
       }
@@ -89,11 +86,14 @@ app.use(
           if (chunk) chunks.push(chunk);
           let body = Buffer.concat(chunks).toString('utf8');
 
-          // Reescreve TODO domínio https://now.gg para o domínio local
-          body = body.replace(/https:\/\/now\.gg/gi, LOCAL_DOMAIN);
+          // Reescreve URLs absolutas de jogos (/apps) para domínio local
+          // Exemplo: https://now.gg/apps/... -> http://localhost:3000/apps/...
+          body = body.replace(
+            /https:\/\/now\.gg\/apps/gi,
+            `${LOCAL_DOMAIN}/apps`
+          );
 
-          // Também pode reescrever HTTP (se existir), opcional:
-          // body = body.replace(/http:\/\/now\.gg/gi, LOCAL_DOMAIN);
+          // Deixa as outras URLs de now.gg intactas (fora /apps)
 
           res.setHeader('content-length', Buffer.byteLength(body));
           originalWrite.call(res, Buffer.from(body));
