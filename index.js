@@ -3,6 +3,8 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
 
+const LOCAL_DOMAIN = 'http://localhost:3000'; // Seu domínio local
+
 app.get('/jogo', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -31,7 +33,6 @@ app.get('/jogo', (req, res) => {
   `);
 });
 
-// Proxy para todos os caminhos, especialmente /apps/*
 app.use(
   '/',
   createProxyMiddleware({
@@ -56,7 +57,7 @@ app.use(
     },
 
     onProxyRes(proxyRes, req, res) {
-      // Ajusta cookies para localhost
+      // Ajusta cookies para domínio local
       if (proxyRes.headers['set-cookie']) {
         const cookies = proxyRes.headers['set-cookie'].map(cookie =>
           cookie
@@ -66,11 +67,11 @@ app.use(
         res.setHeader('set-cookie', cookies);
       }
 
-      // Reescreve redirecionamentos Location para continuar no proxy
+      // Reescreve Location para seu domínio local
       if (proxyRes.headers['location']) {
         const original = proxyRes.headers['location'];
         if (original.startsWith('https://now.gg')) {
-          proxyRes.headers['location'] = original.replace('https://now.gg', '');
+          proxyRes.headers['location'] = original.replace('https://now.gg', LOCAL_DOMAIN);
         }
       }
 
@@ -88,8 +89,11 @@ app.use(
           if (chunk) chunks.push(chunk);
           let body = Buffer.concat(chunks).toString('utf8');
 
-          // Reescreve urls absolutas do now.gg para URLs relativas no proxy
-          body = body.replace(/https:\/\/now\.gg/gi, '');
+          // Reescreve TODO domínio https://now.gg para o domínio local
+          body = body.replace(/https:\/\/now\.gg/gi, LOCAL_DOMAIN);
+
+          // Também pode reescrever HTTP (se existir), opcional:
+          // body = body.replace(/http:\/\/now\.gg/gi, LOCAL_DOMAIN);
 
           res.setHeader('content-length', Buffer.byteLength(body));
           originalWrite.call(res, Buffer.from(body));
@@ -97,12 +101,10 @@ app.use(
         };
       }
     },
-
-    // Aqui não precisa mudar nada no pathRewrite porque a gente quer proxyar tudo do /
   })
 );
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Proxy rodando: http://localhost:${PORT}/jogo`);
+  console.log(`✅ Proxy rodando: ${LOCAL_DOMAIN}/jogo`);
 });
