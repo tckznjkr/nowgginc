@@ -3,7 +3,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
 
-const LOCAL_DOMAIN = 'http://localhost:3000'; // seu domínio local usado para reescrita
+const LOCAL_DOMAIN = 'http://localhost:3000'; // seu domínio local
 
 app.get('/jogo', (req, res) => {
   res.send(`
@@ -30,77 +30,87 @@ app.get('/jogo', (req, res) => {
   `);
 });
 
-// Proxy para todas as rotas /apps
-app.use(
-  '/apps',
-  createProxyMiddleware({
-    target: 'https://now.gg',
-    changeOrigin: true,
-    ws: true,
-    cookieDomainRewrite: 'localhost',
+// Middleware para interceptar e reescrever HTML no proxy
+function rewriteHtmlMiddleware(proxyRes, req, res) {
+  const contentType = proxyRes.headers['content-type'] || '';
 
-    onProxyReq(proxyReq, req) {
-      proxyReq.setHeader('referer', 'https://now.gg/');
-      proxyReq.setHeader('origin', 'https://now.gg');
+  if (contentType.includes('text/html')) {
+    let originalWrite = res.write.bind(res);
+    let originalEnd = res.end.bind(res);
+    let chunks = [];
 
-      proxyReq.setHeader(
-        'user-agent',
-        req.headers['user-agent'] ||
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    res.write = (chunk) => {
+      chunks.push(Buffer.from(chunk));
+    };
+
+    res.end = (chunk) => {
+      if (chunk) chunks.push(Buffer.from(chunk));
+      let body = Buffer.concat(chunks).toString('utf8');
+
+      // Reescreve TODAS as URLs absolutas do now.gg para o proxy local
+      body = body.replace(/https:\/\/now\.gg/gi, LOCAL_DOMAIN);
+
+      // Se quiser, pode adicionar mais reescritas aqui para URLs relativas, scripts, etc.
+
+      res.setHeader('content-length', Buffer.byteLength(body));
+      originalWrite(Buffer.from(body));
+      originalEnd();
+    };
+  }
+}
+
+const proxyOptions = {
+  target: 'https://now.gg',
+  changeOrigin: true,
+  ws: true,
+
+  cookieDomainRewrite: 'localhost',
+
+  onProxyReq(proxyReq, req) {
+    // Ajusta headers para parecer navegador normal
+    proxyReq.setHeader('referer', 'https://now.gg/');
+    proxyReq.setHeader('origin', 'https://now.gg');
+
+    proxyReq.setHeader(
+      'user-agent',
+      req.headers['user-agent'] ||
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    );
+
+    // Repassa cookies do cliente para o servidor proxy
+    if (req.headers.cookie) {
+      proxyReq.setHeader('cookie', req.headers.cookie);
+    }
+  },
+
+  onProxyRes(proxyRes, req, res) {
+    // Reescreve cookies para domínio local
+    if (proxyRes.headers['set-cookie']) {
+      const cookies = proxyRes.headers['set-cookie'].map(cookie =>
+        cookie
+          .replace(/Domain=\.?now\.gg/gi, 'Domain=localhost')
+          .replace(/Secure/gi, '')
       );
+      res.setHeader('set-cookie', cookies);
+    }
 
-      if (req.headers.cookie) {
-        proxyReq.setHeader('cookie', req.headers.cookie);
+    // Reescreve redirecionamentos para domínio local
+    if (proxyRes.headers['location']) {
+      const location = proxyRes.headers['location'];
+      if (location.startsWith('https://now.gg')) {
+        proxyRes.headers['location'] = location.replace('https://now.gg', LOCAL_DOMAIN);
       }
-    },
+    }
 
-    onProxyRes(proxyRes, req, res) {
-      // Reescreve cookies para domínio localhost
-      if (proxyRes.headers['set-cookie']) {
-        const cookies = proxyRes.headers['set-cookie'].map(cookie =>
-          cookie
-            .replace(/Domain=\.?now\.gg/gi, 'Domain=localhost')
-            .replace(/Secure/gi, '')
-        );
-        res.setHeader('set-cookie', cookies);
-      }
+    // Reescreve o corpo HTML para manter tudo no proxy
+    rewriteHtmlMiddleware(proxyRes, req, res);
+  },
+};
 
-      // Reescreve Location para domínio local se for redirecionamento para /apps
-      if (proxyRes.headers['location']) {
-        const location = proxyRes.headers['location'];
-        if (location.startsWith('https://now.gg/apps')) {
-          proxyRes.headers['location'] = location.replace('https://now.gg', LOCAL_DOMAIN);
-        }
-      }
+// Proxy para /apps (jogos)
+app.use('/apps', createProxyMiddleware(proxyOptions));
 
-      const contentType = proxyRes.headers['content-type'] || '';
-      if (contentType.includes('text/html')) {
-        const originalWrite = res.write;
-        const originalEnd = res.end;
-        const chunks = [];
-
-        res.write = function (chunk) {
-          chunks.push(chunk);
-        };
-
-        res.end = function (chunk) {
-          if (chunk) chunks.push(chunk);
-          let body = Buffer.concat(chunks).toString('utf8');
-
-          // Reescreve TODAS URLs absolutas para jogos (/apps) para domínio local
-          body = body.replace(/https:\/\/now\.gg\/apps/gi, `${LOCAL_DOMAIN}/apps`);
-
-          res.setHeader('content-length', Buffer.byteLength(body));
-          originalWrite.call(res, Buffer.from(body));
-          originalEnd.call(res);
-        };
-      }
-    },
-  })
-);
-
-// Opcional: você pode servir outras rotas (raiz, etc) sem proxy ou com proxy normal
-// Por exemplo, para o resto do site sem reescrita:
+// Proxy para outras rotas sem reescrita (pode mudar ou remover se quiser)
 app.use(
   '/',
   createProxyMiddleware({
