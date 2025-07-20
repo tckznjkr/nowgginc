@@ -3,11 +3,11 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const app = express();
 
 app.use('/', createProxyMiddleware({
-  target: 'https://now.gg/apps/19900',
+  target: 'https://now.gg/apps/19901',
   changeOrigin: true,
   onProxyReq(proxyReq) {
-    proxyReq.setHeader('referer', 'https://now.gg/apps/19900');
-    proxyReq.setHeader('origin', 'https://now.gg/apps/19900');
+    proxyReq.setHeader('referer', 'https://now.gg/apps/19901');
+    proxyReq.setHeader('origin', 'https://now.gg/apps/19901');
   },
   pathRewrite: {
     '^/': '/', // mantém a estrutura de caminho
