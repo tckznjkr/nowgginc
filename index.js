@@ -21,18 +21,27 @@ const proxy = createProxyMiddleware({
   onProxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
     const contentType = proxyRes.headers['content-type'];
 
+    // Redirecionamentos HTTP (location header)
+    if (proxyRes.headers['location']) {
+      proxyRes.headers['location'] = proxyRes.headers['location'].replace(/^https:\/\/now\.gg/, '');
+    }
+
+    // Reescreve cookies
     const cookies = proxyRes.headers['set-cookie'];
     if (cookies) {
-      const newCookies = cookies.map(cookie =>
-        cookie.replace(/Domain=\.?now\.gg/gi, 'Domain=localhost')
-      );
+      const newCookies = cookies.map(cookie => {
+        return cookie
+          .replace(/Domain=\.?now\.gg/gi, 'Domain=localhost')
+          .replace(/Secure/gi, ''); // remove "Secure" para funcionar em HTTP local
+      });
       res.setHeader('set-cookie', newCookies);
     }
 
+    // Manipula HTML
     if (contentType && contentType.includes('text/html')) {
       let body = responseBuffer.toString('utf8');
 
-      // Reescreve redirecionamentos
+      // Substitui redirecionamentos JS
       body = body.replace(/https:\/\/now\.gg/g, '');
       body = body.replace(/window\.location\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'window.location = "$1"');
       body = body.replace(/window\.location\.href\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'window.location.href = "$1"');
@@ -40,24 +49,14 @@ const proxy = createProxyMiddleware({
       body = body.replace(/<meta\s+http-equiv=["']refresh["']\s+content=["']\d+;\s*url=https:\/\/now\.gg([^"']*)["']/gi,
         '<meta http-equiv="refresh" content="0;url=$1">');
 
-      // Injetar simulação de DPI e largura mobile
+      // Injetar DPI 700 e largura mobile
       body = body.replace('</head>', `
         <script>
-          Object.defineProperty(window, 'devicePixelRatio', {
-            get: () => 7
-          });
-          Object.defineProperty(screen, 'width', {
-            get: () => 400
-          });
-          Object.defineProperty(screen, 'height', {
-            get: () => 800
-          });
-          Object.defineProperty(window, 'innerWidth', {
-            get: () => 400
-          });
-          Object.defineProperty(window, 'innerHeight', {
-            get: () => 800
-          });
+          Object.defineProperty(window, 'devicePixelRatio', { get: () => 7 });
+          Object.defineProperty(screen, 'width', { get: () => 400 });
+          Object.defineProperty(screen, 'height', { get: () => 800 });
+          Object.defineProperty(window, 'innerWidth', { get: () => 400 });
+          Object.defineProperty(window, 'innerHeight', { get: () => 800 });
         </script>
       </head>`);
 
@@ -76,5 +75,5 @@ app.use('/', proxy);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Proxy rodando em http://localhost:${PORT}`);
+  console.log(`✅ Proxy rodando com domínio e DPI ajustado: http://localhost:${PORT}`);
 });
