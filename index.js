@@ -22,7 +22,7 @@ app.get('/jogo', (req, res) => {
       </head>
       <body>
         <iframe
-          src="/play/roblox-corporation/5349/roblox"
+          src="/apps/Blox-fruit/19901/Blox-fruit.html"
           allow="autoplay; fullscreen"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
         ></iframe>
@@ -31,6 +31,7 @@ app.get('/jogo', (req, res) => {
   `);
 });
 
+// Proxy para todos os caminhos, especialmente /apps/*
 app.use(
   '/',
   createProxyMiddleware({
@@ -43,7 +44,6 @@ app.use(
       proxyReq.setHeader('referer', 'https://now.gg/');
       proxyReq.setHeader('origin', 'https://now.gg');
 
-      // ✅ Define user-agent fixo
       proxyReq.setHeader(
         'user-agent',
         req.headers['user-agent'] ||
@@ -56,6 +56,7 @@ app.use(
     },
 
     onProxyRes(proxyRes, req, res) {
+      // Ajusta cookies para localhost
       if (proxyRes.headers['set-cookie']) {
         const cookies = proxyRes.headers['set-cookie'].map(cookie =>
           cookie
@@ -65,10 +66,12 @@ app.use(
         res.setHeader('set-cookie', cookies);
       }
 
+      // Reescreve redirecionamentos Location para continuar no proxy
       if (proxyRes.headers['location']) {
         const original = proxyRes.headers['location'];
-        const rewritten = original.replace(/^https:\/\/now\.gg/, '');
-        proxyRes.headers['location'] = rewritten;
+        if (original.startsWith('https://now.gg')) {
+          proxyRes.headers['location'] = original.replace('https://now.gg', '');
+        }
       }
 
       const contentType = proxyRes.headers['content-type'] || '';
@@ -85,6 +88,7 @@ app.use(
           if (chunk) chunks.push(chunk);
           let body = Buffer.concat(chunks).toString('utf8');
 
+          // Reescreve urls absolutas do now.gg para URLs relativas no proxy
           body = body.replace(/https:\/\/now\.gg/gi, '');
 
           res.setHeader('content-length', Buffer.byteLength(body));
@@ -94,9 +98,7 @@ app.use(
       }
     },
 
-    pathRewrite: {
-      '^/': '/',
-    },
+    // Aqui não precisa mudar nada no pathRewrite porque a gente quer proxyar tudo do /
   })
 );
 
