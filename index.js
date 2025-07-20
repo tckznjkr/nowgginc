@@ -1,4 +1,3 @@
-[media pointer="file-service://file-HcyjE44ht2WXytJkBCuTDn"]
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const app = express();
