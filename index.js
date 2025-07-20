@@ -5,32 +5,36 @@ const app = express();
 const proxy = createProxyMiddleware({
   target: 'https://now.gg',
   changeOrigin: true,
-  selfHandleResponse: true, // necessário para interceptar a resposta
+  selfHandleResponse: true,
   onProxyReq(proxyReq) {
     proxyReq.setHeader('referer', 'https://now.gg');
     proxyReq.setHeader('origin', 'https://now.gg');
   },
   onProxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
-    let contentType = proxyRes.headers['content-type'];
+    const contentType = proxyRes.headers['content-type'];
 
     if (contentType && contentType.includes('text/html')) {
-      let response = responseBuffer.toString('utf8');
+      let body = responseBuffer.toString('utf8');
 
-      // Substitui links absolutos para manter dentro do proxy
-      response = response.replace(/https:\/\/now\.gg/g, '');
-      response = response.replace(/href="\/+/g, 'href="/');
-      response = response.replace(/src="\/+/g, 'src="/');
+      // Substitui redirecionamentos via JavaScript
+      body = body.replace(/window\.location\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'window.location = "$1"');
+      body = body.replace(/window\.location\.href\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'window.location.href = "$1"');
+      body = body.replace(/document\.location\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'document.location = "$1"');
 
-      // Corrige redirecionamentos forçados para now.gg
-      response = response.replace(/window\.location\s*=\s*["']https:\/\/now\.gg[^"']*["']/g, '/* redirecionamento bloqueado */');
+      // Redirecionamentos via meta refresh
+      body = body.replace(/<meta\s+http-equiv=["']refresh["']\s+content=["']\d+;\s*url=https:\/\/now\.gg([^"']*)["']/gi,
+        '<meta http-equiv="refresh" content="0;url=$1">');
 
-      return response;
+      // Substitui links absolutos
+      body = body.replace(/https:\/\/now\.gg/g, '');
+
+      return body;
     }
 
-    return responseBuffer; // conteúdo não HTML
+    return responseBuffer;
   }),
   pathRewrite: {
-    '^/': '/', // mantém o caminho original
+    '^/': '/',
   }
 });
 
@@ -38,5 +42,5 @@ app.use('/', proxy);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Proxy reverso rodando em http://localhost:${PORT}`);
+  console.log(`✅ Proxy com redirecionamento reescrito rodando em http://localhost:${PORT}`);
 });
