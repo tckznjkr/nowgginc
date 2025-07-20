@@ -3,7 +3,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
 
-const LOCAL_DOMAIN = 'http://localhost:3000'; // seu domínio local
+const LOCAL_DOMAIN = 'http://localhost:3000'; // seu domínio local usado para reescrita
 
 app.get('/jogo', (req, res) => {
   res.send(`
@@ -30,8 +30,9 @@ app.get('/jogo', (req, res) => {
   `);
 });
 
+// Proxy para todas as rotas /apps
 app.use(
-  '/',
+  '/apps',
   createProxyMiddleware({
     target: 'https://now.gg',
     changeOrigin: true,
@@ -54,7 +55,7 @@ app.use(
     },
 
     onProxyRes(proxyRes, req, res) {
-      // Ajusta cookies para domínio local, só se for jogos (/apps)
+      // Reescreve cookies para domínio localhost
       if (proxyRes.headers['set-cookie']) {
         const cookies = proxyRes.headers['set-cookie'].map(cookie =>
           cookie
@@ -64,11 +65,11 @@ app.use(
         res.setHeader('set-cookie', cookies);
       }
 
-      // Reescreve Location para seu domínio local só se Location for /apps
+      // Reescreve Location para domínio local se for redirecionamento para /apps
       if (proxyRes.headers['location']) {
-        const original = proxyRes.headers['location'];
-        if (original.startsWith('https://now.gg/apps')) {
-          proxyRes.headers['location'] = original.replace('https://now.gg', LOCAL_DOMAIN);
+        const location = proxyRes.headers['location'];
+        if (location.startsWith('https://now.gg/apps')) {
+          proxyRes.headers['location'] = location.replace('https://now.gg', LOCAL_DOMAIN);
         }
       }
 
@@ -86,14 +87,8 @@ app.use(
           if (chunk) chunks.push(chunk);
           let body = Buffer.concat(chunks).toString('utf8');
 
-          // Reescreve URLs absolutas de jogos (/apps) para domínio local
-          // Exemplo: https://now.gg/apps/... -> http://localhost:3000/apps/...
-          body = body.replace(
-            /https:\/\/now\.gg\/apps/gi,
-            `${LOCAL_DOMAIN}/apps`
-          );
-
-          // Deixa as outras URLs de now.gg intactas (fora /apps)
+          // Reescreve TODAS URLs absolutas para jogos (/apps) para domínio local
+          body = body.replace(/https:\/\/now\.gg\/apps/gi, `${LOCAL_DOMAIN}/apps`);
 
           res.setHeader('content-length', Buffer.byteLength(body));
           originalWrite.call(res, Buffer.from(body));
@@ -101,6 +96,18 @@ app.use(
         };
       }
     },
+  })
+);
+
+// Opcional: você pode servir outras rotas (raiz, etc) sem proxy ou com proxy normal
+// Por exemplo, para o resto do site sem reescrita:
+app.use(
+  '/',
+  createProxyMiddleware({
+    target: 'https://now.gg',
+    changeOrigin: true,
+    ws: true,
+    cookieDomainRewrite: 'localhost',
   })
 );
 
