@@ -1,137 +1,106 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
+const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware');
 
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+let sessionCookies = [];
 
-let browser;
-let page;
-let isNavigating = false;
+// 🔁 Função para capturar cookies da now.gg
+async function fetchNowGGCookies() {
+  try {
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
 
-const VIEWPORT = {
-  width: 1080,
-  height: 1920,
-  deviceScaleFactor: 7, // DPI 700
-  isMobile: true,
-  hasTouch: true,
-  isLandscape: false,
-};
-const USER_AGENT =
-  'Mozilla/5.0 (Linux; Android 10; Bluestacks) AppleWebKit/537.36 Chrome/99.0 Mobile Safari/537.36';
+    const page = await browser.newPage();
 
-async function initBrowser() {
-  browser = await puppeteer.launch({
-    headless: true, // obrigatório no Render
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage', // evita erro /dev/shm
-      '--disable-gpu',
-      '--single-process',
-      '--no-zygote',
-    ],
-  });
+    await page.setUserAgent('Mozilla/5.0 (Linux; Android 10; Bluestacks) AppleWebKit/537.36 Chrome/99.0 Mobile Safari/537.36');
 
-  page = await browser.newPage();
+    await page.goto('https://now.gg/apps/uncube/10005/now.html', {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
 
-  await page.setUserAgent(USER_AGENT);
-  await page.setViewport(VIEWPORT);
+    await page.waitForTimeout(5000);
 
-  await page.setExtraHTTPHeaders({
-    'accept-language': 'en-US,en;q=0.9',
-    'sec-ch-ua': '"Chromium";v="114", "Google Chrome";v="114", ";Not A Brand";v="99"',
-  });
+    sessionCookies = await page.cookies();
+    await browser.close();
 
-  await page.goto('https://now.gg/apps/uncube/10005/now.html', {
-    waitUntil: 'networkidle2',
-    timeout: 60000,
-  });
-
-  console.log('🚀 Puppeteer iniciado no Render e página carregada');
+    console.log('✅ Cookies atualizados em', new Date().toLocaleString());
+  } catch (err) {
+    console.error('❌ Erro ao capturar cookies:', err.message);
+  }
 }
 
-async function handleRequest(req, res) {
-  if (isNavigating) {
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  isNavigating = true;
+// 🔄 Atualiza cookies agora e a cada 30 minutos
+await fetchNowGGCookies();
+setInterval(fetchNowGGCookies, 30 * 60 * 1000); // 30 minutos
 
-  try {
-    const targetURL = 'https://now.gg' + req.originalUrl;
+// 🧩 Proxy com injeção e manipulação
+const proxy = createProxyMiddleware({
+  target: 'https://now.gg',
+  changeOrigin: true,
+  selfHandleResponse: true,
+  cookieDomainRewrite: 'localhost',
 
-    await page.setRequestInterception(true);
+  onProxyReq(proxyReq, req) {
+    proxyReq.setHeader('referer', 'https://now.gg');
+    proxyReq.setHeader('origin', 'https://now.gg');
+    proxyReq.setHeader('user-agent', req.headers['user-agent'] || 'Mozilla/5.0');
 
-    page.once('request', (interceptedRequest) => {
-      const headers = Object.assign({}, interceptedRequest.headers());
+    const cookieHeader = sessionCookies.map(c => `${c.name}=${c.value}`).join('; ');
+    if (cookieHeader) {
+      proxyReq.setHeader('cookie', cookieHeader);
+    }
+  },
 
-      headers['user-agent'] = req.headers['user-agent'] || USER_AGENT;
-      headers['referer'] = 'https://now.gg';
-      headers['origin'] = 'https://now.gg';
+  onProxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
+    const contentType = proxyRes.headers['content-type'];
 
-      headers['cookie'] = req.headers['cookie'] || '';
-
-      interceptedRequest.continue({ headers });
-    });
-
-    const response = await page.goto(targetURL, {
-      waitUntil: 'networkidle2',
-      timeout: 60000,
-    });
-
-    const buffer = await response.buffer();
-    const contentType = response.headers()['content-type'] || '';
-
-    res.setHeader('content-type', contentType);
-
-    const setCookies = response.headers()['set-cookie'];
-    if (setCookies) {
-      const newCookies = Array.isArray(setCookies) ? setCookies : [setCookies];
-      const fixedCookies = newCookies.map((c) =>
-        c.replace(/Domain=\.?now\.gg/gi, 'Domain=localhost').replace(/Secure/gi, '')
-      );
-      res.setHeader('set-cookie', fixedCookies);
+    if (proxyRes.headers['location']) {
+      proxyRes.headers['location'] = proxyRes.headers['location'].replace(/^https:\/\/now\.gg/, '');
     }
 
-    if (contentType.includes('text/html')) {
-      let body = buffer.toString('utf8');
+    const cookies = proxyRes.headers['set-cookie'];
+    if (cookies) {
+      const newCookies = cookies.map(cookie =>
+        cookie.replace(/Domain=\.?now\.gg/gi, 'Domain=localhost').replace(/Secure/gi, '')
+      );
+      res.setHeader('set-cookie', newCookies);
+    }
+
+    if (contentType && contentType.includes('text/html')) {
+      let body = responseBuffer.toString('utf8');
 
       body = body.replace(/https:\/\/now\.gg/g, '');
+      body = body.replace(/window\.location\s*=\s*['"]https:\/\/now\.gg([^'"]*)['"]/g, 'window.location = "$1"');
 
-      body = body.replace(
-        '</head>',
-        `
+      body = body.replace('</head>', `
         <script>
           Object.defineProperty(window, 'devicePixelRatio', { get: () => 7 });
-          Object.defineProperty(screen, 'width', { get: () => 1080 });
-          Object.defineProperty(screen, 'height', { get: () => 1920 });
-          Object.defineProperty(window, 'innerWidth', { get: () => 1080 });
-          Object.defineProperty(window, 'innerHeight', { get: () => 1920 });
+          Object.defineProperty(screen, 'width', { get: () => 400 });
+          Object.defineProperty(screen, 'height', { get: () => 800 });
+          Object.defineProperty(window, 'innerWidth', { get: () => 400 });
+          Object.defineProperty(window, 'innerHeight', { get: () => 800 });
         </script>
-      </head>`
-      );
+      </head>`);
 
-      res.status(response.status());
-      res.send(body);
-    } else {
-      res.status(response.status());
-      res.send(buffer);
+      return body;
     }
-  } catch (error) {
-    console.error('❌ Erro no Puppeteer proxy:', error);
-    res.status(500).send('Erro interno no proxy');
-  } finally {
-    isNavigating = false;
-  }
-}
 
-app.use(async (req, res) => {
-  await handleRequest(req, res);
+    return responseBuffer;
+  }),
+
+  pathRewrite: {
+    '^/': '/',
+  }
 });
 
-(async () => {
-  await initBrowser();
-  app.listen(PORT, () => {
-    console.log(`🚀 Proxy com Puppeteer rodando no Render: http://localhost:${PORT}`);
-  });
-})();
+app.use('/', proxy);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Proxy rodando com atualização automática: http://localhost:${PORT}`);
+});
